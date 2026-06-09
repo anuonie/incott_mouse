@@ -584,7 +584,8 @@ class MouseWidget(QWidget):
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_path, 0, winreg.KEY_WRITE)
             if checked:
-                cmd = f'"{sys.executable}" "{os.path.abspath(__file__)}" --autostart'
+                main_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'main.py')
+                cmd = f'"{ sys.executable}" "{main_py}" --autostart'
                 winreg.SetValueEx(key, "MouseWidget", 0, winreg.REG_SZ, cmd)
             else:
                 winreg.DeleteValue(key, "MouseWidget")
