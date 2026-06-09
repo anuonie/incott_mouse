@@ -164,6 +164,7 @@ class MouseWidget(QWidget):
         self._drag_pos = None
         self._battery_pct = 0
         self._target_pct = 0
+        self._last_battery = None  # 电量棘轮：记录上次显示的电量值
         self._warned_low = False
         self._glow_phase = 0.0
         self._left_pressed = False
@@ -682,7 +683,17 @@ class MouseWidget(QWidget):
         if not info:
             return
 
-        self._target_pct = info['battery']
+        raw_pct = info['battery']
+        charging = info.get('charging', False)
+
+        # 电量棘轮：电量只能下降，不能上升（除非充电或首次读取）
+        if self._last_battery is None or charging:
+            self._last_battery = raw_pct
+        elif raw_pct < self._last_battery:
+            self._last_battery = raw_pct
+        # 否则保持 self._last_battery 不变（防止跳高）
+
+        self._target_pct = self._last_battery
         self._connected = info['connected']
 
         name = info['name']
@@ -755,7 +766,7 @@ class MouseWidget(QWidget):
         color = self._battery_color(pct)
         self.batt_pct_lbl.setText(f"{pct}%")
         self.batt_pct_lbl.setStyleSheet(
-            f"color:{color.name()};font-size:16px;font-weight:bold;border:none;"
+            f"color:{color.name()};font-size:14px;font-weight:bold;border:none;"
         )
         if pct > 60:
             self.batt_icon_lbl.setText("🔋")

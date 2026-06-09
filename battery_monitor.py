@@ -44,11 +44,19 @@ class BatteryMonitor:
     def __init__(self):
         self._cached_data = None
         self._last_check = 0
-        self._check_interval = 3600
+        self._check_interval = 600  # 默认 10 分钟
         self._lock = threading.Lock()
         self._device_path = None
         self._all_paths = []
         self._find_device()
+
+    def set_check_interval(self, seconds):
+        """设置检测间隔（秒）"""
+        self._check_interval = seconds
+
+    @property
+    def check_interval(self):
+        return self._check_interval
 
     def _find_device(self):
         """查找所有 FF05 接口，按 Col 排序（优先 Col02）"""
@@ -122,25 +130,22 @@ class BatteryMonitor:
                 if not first:
                     continue
 
-                # 等待固件更新 HID 报告，再读两次
+                # 等待固件更新 HID 报告，再读一次（共 2 次取最小值，棘轮机制防止跳高）
                 time.sleep(1.0)
                 later_reads = []
-                for read_round in range(2):
-                    h.send_feature_report(cmd)
-                    for attempt in range(5):
-                        time.sleep(0.06)
-                        try:
-                            response = h.get_feature_report(0x09, 64)
-                        except Exception:
-                            continue
-                        if not response or len(response) < 4:
-                            continue
-                        if response[0] != 0x09 or response[1] != 0x89:
-                            continue
-                        later_reads.append(response)
-                        break
-                    if read_round == 0:
-                        time.sleep(0.5)
+                h.send_feature_report(cmd)
+                for attempt in range(5):
+                    time.sleep(0.06)
+                    try:
+                        response = h.get_feature_report(0x09, 64)
+                    except Exception:
+                        continue
+                    if not response or len(response) < 4:
+                        continue
+                    if response[0] != 0x09 or response[1] != 0x89:
+                        continue
+                    later_reads.append(response)
+                    break
 
                 # 合并所有读取
                 all_reads = [first] + later_reads
@@ -166,6 +171,9 @@ class BatteryMonitor:
                 }
                 self._device_path = path
 
+                print(f"[BatteryMonitor] 电量:{best['battery']}% "
+                      f"DPI:{best['dpi']} Hz:{best['polling_rate']}")
+
                 # 连接类型根据 PID 判断
                 current_pid = self._get_current_pid()
                 connection = CONN_MAP.get(current_pid, '2.4G 无线')
@@ -180,8 +188,6 @@ class BatteryMonitor:
                     'polling_rate': best['polling_rate'],
                     'is_real': True,
                 }
-                print(f"[BatteryMonitor] 电量:{best['battery']}% "
-                      f"DPI:{best['dpi']} Hz:{best['polling_rate']}")
                 return result
 
             except Exception as e:
