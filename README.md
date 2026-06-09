@@ -1,6 +1,8 @@
 # 鼠标控件小组件
 
-PyQt5 桌面小组件，用于监控因科特 G23 v2 无线鼠标的电量、DPI 和回报率等状态。
+**解决的核心痛点：无线鼠标看不到电量，经常突然没电影响使用。**
+
+个人折腾的 PyQt5 桌面小组件，用于实时监控因科特 G23 v2 无线鼠标的电量、DPI 和回报率等状态，随时掌握鼠标电量，告别突然断电。
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
