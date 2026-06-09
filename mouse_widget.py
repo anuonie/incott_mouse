@@ -10,8 +10,8 @@ import ctypes.wintypes
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QSystemTrayIcon,
-    QMenu, QAction, QGraphicsDropShadowEffect
+    QPushButton, QSystemTrayIcon, QStackedWidget,
+    QMenu, QAction, QWidgetAction, QGraphicsDropShadowEffect
 )
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal, QPropertyAnimation, QEasingCurve, pyqtProperty, QObject
 from PyQt5.QtGui import (
@@ -218,21 +218,41 @@ class MouseWidget(QWidget):
 
         # 标题栏
         lay.addLayout(self._build_title_bar())
-        # 鼠标绘制区 (自定义绘制)
+
+        # 面板切换（QStackedWidget）
+        self.stack = QStackedWidget()
+
+        # ---- 状态面板 ----
+        status_panel = QWidget()
+        status_lay = QVBoxLayout(status_panel)
+        status_lay.setContentsMargins(0, 0, 0, 0)
+        status_lay.setSpacing(12)
+        # 鼠标绘制区
         self.mouse_area = _MouseArea(self)
         self.mouse_area.setFixedHeight(210)
-        lay.addWidget(self.mouse_area)
+        status_lay.addWidget(self.mouse_area)
         # 电量条
-        lay.addLayout(self._build_battery_bar())
+        status_lay.addLayout(self._build_battery_bar())
         # 连接状态卡片
-        lay.addLayout(self._build_conn_card())
+        status_lay.addLayout(self._build_conn_card())
         # DPI / 回报率卡片
-        lay.addLayout(self._build_dpi_card())
+        status_lay.addLayout(self._build_dpi_card())
         # 设备信息卡片
-        lay.addLayout(self._build_info_card())
-        # 开机自启动开关
-        lay.addLayout(self._build_autostart_row())
-        lay.addStretch()
+        status_lay.addLayout(self._build_info_card())
+        status_lay.addStretch()
+        self.stack.addWidget(status_panel)
+
+        # ---- 设置面板 ----
+        settings_panel = QWidget()
+        settings_lay = QVBoxLayout(settings_panel)
+        settings_lay.setContentsMargins(0, 0, 0, 0)
+        settings_lay.setSpacing(12)
+        settings_lay.addLayout(self._build_autostart_card())
+        settings_lay.addStretch()
+        self.stack.addWidget(settings_panel)
+
+        lay.addWidget(self.stack)
+
         # 低电量警告
         self.warn_lbl = QLabel("⚠  电量不足，请尽快充电！")
         self.warn_lbl.setAlignment(Qt.AlignCenter)
@@ -251,10 +271,31 @@ class MouseWidget(QWidget):
         t.setStyleSheet("color:#2a2a3c;font-size:15px;font-weight:bold;border:none;")
         h.addWidget(t)
         h.addStretch()
+        # 设置按钮
+        self.btn_settings = QPushButton("⚙")
+        self.btn_settings.setFixedSize(28, 28)
+        self.btn_settings.setCursor(Qt.PointingHandCursor)
+        self.btn_settings.setToolTip("设置")
+        self.btn_settings.setStyleSheet(self._settings_btn_base_style())
+        self.btn_settings.clicked.connect(self._toggle_settings)
+        h.addWidget(self.btn_settings)
         # 关闭（最小化到托盘）
         self.btn_close = QPushButton("✕")
         self.btn_close.setFixedSize(28, 28)
-        self.btn_close.setStyleSheet(self._circle_btn_style())
+        self.btn_close.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #999;
+                border-radius: 14px; font-size: 14px;
+                border: none; font-weight: bold;
+                padding: 0 0 1px 0;
+            }
+            QPushButton:hover {
+                background: #ff5555; color: white;
+            }
+            QPushButton:pressed {
+                background: #dd3333; color: white;
+            }
+        """)
         self.btn_close.clicked.connect(self._on_close)
         h.addWidget(self.btn_close)
         return h
@@ -359,18 +400,27 @@ class MouseWidget(QWidget):
         h.addWidget(self.conn_type_lbl)
         return self._wrap(card)
 
-    def _build_autostart_row(self):
-        h = QHBoxLayout()
-        h.setContentsMargins(4, 2, 4, 2)
+    def _init_autostart_switch(self):
+        """初始化开机自启动开关"""
+        self.autostart_chk = _ToggleSwitch()
+        self.autostart_chk.setChecked(self._is_autostart())
+        self.autostart_chk.toggled.connect(self._toggle_autostart)
+
+    def _build_autostart_card(self):
+        """构建设置面板 - 开机自启动卡片"""
+        card = QWidget()
+        card.setStyleSheet(self._card_style())
+        h = QHBoxLayout(card)
+        h.setContentsMargins(14, 10, 14, 10)
         lbl = QLabel("开机自启动")
-        lbl.setStyleSheet("color:#8282a0;font-size:12px;")
+        lbl.setStyleSheet("color:#2a2a3c;font-size:13px;font-weight:bold;")
         h.addWidget(lbl)
         h.addStretch()
         self.autostart_chk = _ToggleSwitch()
         self.autostart_chk.setChecked(self._is_autostart())
         self.autostart_chk.toggled.connect(self._toggle_autostart)
         h.addWidget(self.autostart_chk)
-        return h
+        return self._wrap(card)
 
     # ───────── 样式工具 ─────────
 
@@ -617,6 +667,36 @@ class MouseWidget(QWidget):
     def _tray_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
             self._show_from_tray()
+
+    def _settings_btn_base_style(self):
+        return """
+            QPushButton {
+                background: transparent; color: #888;
+                border-radius: 14px; font-size: 16px;
+                border: none; padding: 0 0 2px 0;
+            }
+            QPushButton:hover {
+                background: rgba(0,0,0,15); color: #333;
+            }
+            QPushButton:pressed {
+                background: rgba(0,0,0,25);
+            }
+        """
+
+    def _toggle_settings(self):
+        """切换状态面板 / 设置面板"""
+        if self.stack.currentIndex() == 0:
+            self.stack.setCurrentIndex(1)
+            style = self._settings_btn_base_style()
+            style = style.replace(
+                "background: transparent;",
+                "background: rgba(0,180,135,30);",
+                1  # only first occurrence
+            )
+            self.btn_settings.setStyleSheet(style)
+        else:
+            self.stack.setCurrentIndex(0)
+            self.btn_settings.setStyleSheet(self._settings_btn_base_style())
 
     def _on_close(self):
         """最小化到托盘"""
