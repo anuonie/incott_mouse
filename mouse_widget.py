@@ -266,7 +266,7 @@ class MouseWidget(QWidget):
         h.addWidget(self.batt_icon_lbl)
         self.batt_pct_lbl = QLabel("--%")
         self.batt_pct_lbl.setStyleSheet(
-            "color:#00b878;font-size:16px;font-weight:bold;border:none;"
+            "color:#00b878;font-size:14px;font-weight:bold;border:none;"
         )
         h.addWidget(self.batt_pct_lbl)
         self.batt_status_lbl = QLabel("")
@@ -823,7 +823,7 @@ class _MouseArea(QWidget):
         cx, cy = w / 2, h / 2
 
         mouse_w, mouse_h = 88, 134
-        mx, my = cx - mouse_w / 2, cy - mouse_h / 2 + 10
+        mx, my = cx - mouse_w / 2, cy - mouse_h / 2 - 5
 
         # 鼠标主体 - 浅色渐变
         body_path = QPainterPath()
@@ -876,28 +876,30 @@ class _MouseArea(QWidget):
         glow.setColorAt(1, QColor(0, 180, 135, 0))
         p.fillRect(QRectF(mx - 10, my + mouse_h - 50, mouse_w + 20, 60), QBrush(glow))
 
-        # 电量环形指示器
+        # 电量环形指示器 - 100段分段显示
         pct = self.parent.battery_pct
         color = self.parent._battery_color(round(pct))
+        filled = round(pct)
 
-        radius = 76
-        arc_rect = QRectF(cx - radius, cy - radius + 10, radius * 2, radius * 2)
+        radius = 68
+        arc_rect = QRectF(cx - radius, cy - radius + 5, radius * 2, radius * 2)
         start_angle = 150 * 16
-        full_span = 240 * 16
-        pct_span = int(full_span * pct / 100)
+        full_span = 240 * 16  # 3840 (1/16度)
+        gap = 4                # 段间隙 (1/16度)
+        seg_span = (full_span - gap * 100) // 100  # 每段弧长 (1/16度)
 
-        # 背景弧 - 浅灰
-        p.setPen(QPen(QColor(225, 225, 235), 5, Qt.SolidLine, Qt.RoundCap))
-        p.drawArc(arc_rect, start_angle, full_span)
-
-        # 电量弧
-        if pct > 0:
-            p.setPen(QPen(color, 5, Qt.SolidLine, Qt.RoundCap))
-            p.drawArc(arc_rect, start_angle, pct_span)
+        p.setPen(QPen(QColor(225, 225, 235), 5, Qt.SolidLine, Qt.FlatCap))
+        for i in range(100):
+            angle = start_angle + (full_span * i) // 100
+            if i < filled:
+                p.setPen(QPen(color, 5, Qt.SolidLine, Qt.FlatCap))
+            else:
+                p.setPen(QPen(QColor(225, 225, 235), 5, Qt.SolidLine, Qt.FlatCap))
+            p.drawArc(arc_rect, angle, seg_span)
 
         # 鼠标中心小圆点
         p.setBrush(QColor(color.red(), color.green(), color.blue(), 50))
         p.setPen(Qt.NoPen)
-        p.drawEllipse(QPointF(cx, cy + 15), 5, 5)
+        p.drawEllipse(QPointF(cx, cy + 10), 5, 5)
 
         p.end()
