@@ -573,8 +573,7 @@ class MouseWidget(QWidget):
         self._worker.start()
 
     def _on_refresh_done(self, info):
-        self._target_pct = info['battery']
-        self._refresh_data()
+        self._apply_device_info(info)
         self._stop_refresh_anim()
         self.btn_refresh.setEnabled(True)
 
@@ -749,20 +748,44 @@ class MouseWidget(QWidget):
 
     def _init_timers(self):
         self.data_timer = QTimer(self)
-        self.data_timer.timeout.connect(self._refresh_data)
+        self.data_timer.timeout.connect(self._async_refresh_data)
         self.data_timer.start(60000)
 
         self.anim_timer = QTimer(self)
         self.anim_timer.timeout.connect(self._animate)
         self.anim_timer.start(30)
 
-        QTimer.singleShot(500, self._refresh_data)
+        # 首次读取放到后台线程，避免阻塞UI
+        QTimer.singleShot(500, self._async_refresh_data)
 
-    def _refresh_data(self):
-        info = self.monitor.get_device_info()
-        if not info:
-            return
+    def _async_refresh_data(self):
+        """在后台线程读取数据，避免阻塞UI"""
+        from PyQt5.QtCore import QThread, pyqtSignal
 
+        class _DataWorker(QThread):
+            done = pyqtSignal(dict)
+
+            def __init__(self, monitor):
+                super().__init__()
+                self.monitor = monitor
+
+            def run(self):
+                info = self.monitor.get_device_info()
+                if info:
+                    self.done.emit(info)
+
+        self._data_worker = _DataWorker(self.monitor)
+        self._data_worker.done.connect(self._on_data_ready)
+        self._data_worker.start()
+
+    def _on_data_ready(self, info):
+        """后台线程数据就绪，更新UI"""
+        raw_pct = info['battery']
+        self._target_pct = raw_pct
+        self._apply_device_info(info)
+
+    def _apply_device_info(self, info):
+        """根据读取到的设备信息更新UI"""
         raw_pct = info['battery']
         charging = info.get('charging', False)
 
