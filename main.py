@@ -16,6 +16,12 @@ import ctypes
 # 设置工作目录为脚本所在目录
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+# 单实例检查：防止重复启动导致多个托盘图标
+_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "MouseWidget_SingleInstance")
+if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+    print("已有实例在运行，退出")
+    sys.exit(0)
+
 # Windows 任务栏图标：设置 AppUserModelID，使任务栏显示自定义图标而非 Python 图标
 try:
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('MouseWidget.App')

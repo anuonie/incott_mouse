@@ -13,12 +13,96 @@ from PyQt5.QtWidgets import (
     QPushButton, QSystemTrayIcon, QStackedWidget,
     QMenu, QAction, QWidgetAction, QGraphicsDropShadowEffect
 )
-from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal, QPropertyAnimation, QEasingCurve, pyqtProperty, QObject
+from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, QPoint, pyqtSignal, QPropertyAnimation, QEasingCurve, pyqtProperty, QObject, QSettings
 from PyQt5.QtGui import (
     QPainter, QColor, QFont, QPen, QLinearGradient,
     QConicalGradient, QRadialGradient, QBrush, QPainterPath, QIcon
 )
 import math
+
+
+class _DropdownButton(QWidget):
+    """自定义下拉选择按钮：用 QPushButton + QMenu 替代 QComboBox"""
+    value_changed = pyqtSignal(int)  # 选中索引变化
+
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        self._items = items
+        self._current_index = 0
+
+        self._btn = QPushButton(items[0] if items else "")
+        self._btn.setCursor(Qt.PointingHandCursor)
+        self._btn.setStyleSheet("""
+            QPushButton {
+                color: #2a2a3c; background: rgba(0,0,0,8);
+                border: none; border-radius: 6px;
+                padding: 4px 22px 4px 10px; font-size: 12px; font-weight: bold;
+            }
+            QPushButton:hover { background: rgba(0,0,0,15); }
+            QPushButton:pressed { background: rgba(0,0,0,22); }
+        """)
+        self._btn.clicked.connect(self._show_menu)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self._btn)
+
+    def setCurrentIndex(self, idx):
+        if 0 <= idx < len(self._items):
+            self._current_index = idx
+            self._btn.setText(self._items[idx])
+
+    def currentIndex(self):
+        return self._current_index
+
+    def _show_menu(self):
+        menu = QMenu(self)
+        btn_w = self._btn.width()
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: white; border: 1px solid #e0e0ea;
+                border-radius: 8px; padding: 4px 0px;
+                min-width: {btn_w}px;
+            }}
+            QMenu::item {{
+                padding: 6px 10px; font-size: 12px; color: #2a2a3c;
+                min-width: {btn_w - 20}px;
+                text-align: center;
+            }}
+            QMenu::item:selected {{
+                background: rgba(0,180,135,30); color: #2a2a3c;
+            }}
+        """)
+        for i, text in enumerate(self._items):
+            act = QAction(text, menu)
+            act.triggered.connect(lambda checked, idx=i: self._on_select(idx))
+            menu.addAction(act)
+        # 弹出菜单，定位到按钮下方
+        pos = self._btn.mapToGlobal(QPoint(0, self._btn.height()))
+        menu.exec_(pos)
+
+    def _on_select(self, idx):
+        self._current_index = idx
+        self._btn.setText(self._items[idx])
+        self.value_changed.emit(idx)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        # 绘制小三角
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self._btn.geometry()
+        cx = r.right() - 10
+        cy = r.center().y()
+        path = QPainterPath()
+        path.moveTo(cx - 3.5, cy - 2)
+        path.lineTo(cx + 3.5, cy - 2)
+        path.lineTo(cx, cy + 2.5)
+        path.closeSubpath()
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(130, 130, 155))
+        p.drawPath(path)
+        p.end()
 
 
 class _MouseHook(QObject):
@@ -171,6 +255,13 @@ class MouseWidget(QWidget):
         self._right_pressed = False
         self._scroll_alpha = 0  # 滚轮发光效果
 
+        # 设置项默认值
+        self._low_batt_threshold = 20   # 低电量警告阈值 (%)
+        self._refresh_interval = 10     # 数据刷新间隔 (分钟)
+        self._close_quits = False       # 关闭窗口是否退出程序
+        self._low_batt_notify = True    # 低电量托盘通知开关
+        self._load_settings()
+
         # 明亮主题颜色
         self.C_BG = QColor(255, 255, 255)
         self.C_CARD = QColor(248, 248, 252)
@@ -246,8 +337,12 @@ class MouseWidget(QWidget):
         settings_panel = QWidget()
         settings_lay = QVBoxLayout(settings_panel)
         settings_lay.setContentsMargins(0, 0, 0, 0)
-        settings_lay.setSpacing(12)
+        settings_lay.setSpacing(10)
         settings_lay.addLayout(self._build_autostart_card())
+        settings_lay.addLayout(self._build_low_batt_card())
+        settings_lay.addLayout(self._build_refresh_interval_card())
+        settings_lay.addLayout(self._build_close_quit_card())
+        settings_lay.addLayout(self._build_low_batt_notify_card())
         settings_lay.addStretch()
         self.stack.addWidget(settings_panel)
 
@@ -420,6 +515,86 @@ class MouseWidget(QWidget):
         self.autostart_chk.setChecked(self._is_autostart())
         self.autostart_chk.toggled.connect(self._toggle_autostart)
         h.addWidget(self.autostart_chk)
+        return self._wrap(card)
+
+    def _build_low_batt_card(self):
+        """低电量警告阈值"""
+        card = QWidget()
+        card.setStyleSheet(self._card_style())
+        h = QHBoxLayout(card)
+        h.setContentsMargins(14, 10, 14, 10)
+        lbl = QLabel("低电量警告")
+        lbl.setStyleSheet("color:#2a2a3c;font-size:13px;font-weight:bold;")
+        h.addWidget(lbl)
+        h.addStretch()
+        self.low_batt_combo = _DropdownButton(["10%", "15%", "20%", "25%", "30%"])
+        thresholds = [10, 15, 20, 25, 30]
+        try:
+            idx = thresholds.index(self._low_batt_threshold)
+        except ValueError:
+            idx = 2
+        self.low_batt_combo.setCurrentIndex(idx)
+        self.low_batt_combo.value_changed.connect(self._on_low_batt_changed)
+        h.addWidget(self.low_batt_combo)
+        return self._wrap(card)
+
+    def _build_refresh_interval_card(self):
+        """数据刷新间隔"""
+        card = QWidget()
+        card.setStyleSheet(self._card_style())
+        h = QHBoxLayout(card)
+        h.setContentsMargins(14, 10, 14, 10)
+        lbl = QLabel("刷新间隔")
+        lbl.setStyleSheet("color:#2a2a3c;font-size:13px;font-weight:bold;")
+        h.addWidget(lbl)
+        h.addStretch()
+        self.refresh_combo = _DropdownButton(["5 分钟", "10 分钟", "15 分钟", "30 分钟"])
+        intervals = [5, 10, 15, 30]
+        try:
+            idx = intervals.index(self._refresh_interval)
+        except ValueError:
+            idx = 1
+        self.refresh_combo.setCurrentIndex(idx)
+        self.refresh_combo.value_changed.connect(self._on_refresh_interval_changed)
+        h.addWidget(self.refresh_combo)
+        return self._wrap(card)
+
+    def _build_close_quit_card(self):
+        """关闭窗口时退出程序"""
+        card = QWidget()
+        card.setStyleSheet(self._card_style())
+        h = QHBoxLayout(card)
+        h.setContentsMargins(14, 10, 14, 10)
+        lay = QVBoxLayout()
+        lay.setSpacing(2)
+        lbl = QLabel("关闭窗口时退出")
+        lbl.setStyleSheet("color:#2a2a3c;font-size:13px;font-weight:bold;")
+        lay.addWidget(lbl)
+        sub = QLabel("关闭后不保留托盘图标")
+        sub.setStyleSheet("color:#8282a0;font-size:10px;")
+        lay.addWidget(sub)
+        h.addLayout(lay)
+        h.addStretch()
+        self.close_quit_chk = _ToggleSwitch()
+        self.close_quit_chk.setChecked(self._close_quits)
+        self.close_quit_chk.toggled.connect(self._on_close_quit_changed)
+        h.addWidget(self.close_quit_chk)
+        return self._wrap(card)
+
+    def _build_low_batt_notify_card(self):
+        """低电量托盘通知开关"""
+        card = QWidget()
+        card.setStyleSheet(self._card_style())
+        h = QHBoxLayout(card)
+        h.setContentsMargins(14, 10, 14, 10)
+        lbl = QLabel("低电量弹窗通知")
+        lbl.setStyleSheet("color:#2a2a3c;font-size:13px;font-weight:bold;")
+        h.addWidget(lbl)
+        h.addStretch()
+        self.low_batt_notify_chk = _ToggleSwitch()
+        self.low_batt_notify_chk.setChecked(self._low_batt_notify)
+        self.low_batt_notify_chk.toggled.connect(self._on_low_batt_notify_changed)
+        h.addWidget(self.low_batt_notify_chk)
         return self._wrap(card)
 
     # ───────── 样式工具 ─────────
@@ -657,6 +832,45 @@ class MouseWidget(QWidget):
             self.autostart_action.setChecked(revert)
             self.autostart_action.blockSignals(False)
 
+    # ───────── 设置项处理 ─────────
+
+    def _load_settings(self):
+        """从 QSettings 加载持久化设置"""
+        s = QSettings("MouseWidget", "MouseWidget")
+        self._low_batt_threshold = s.value("low_batt_threshold", 20, int)
+        self._refresh_interval = s.value("refresh_interval", 10, int)
+        self._close_quits = s.value("close_quits", False, bool)
+        self._low_batt_notify = s.value("low_batt_notify", True, bool)
+
+    def _save_settings(self):
+        """保存设置到 QSettings"""
+        s = QSettings("MouseWidget", "MouseWidget")
+        s.setValue("low_batt_threshold", self._low_batt_threshold)
+        s.setValue("refresh_interval", self._refresh_interval)
+        s.setValue("close_quits", self._close_quits)
+        s.setValue("low_batt_notify", self._low_batt_notify)
+
+    def _on_low_batt_changed(self, idx):
+        thresholds = [10, 15, 20, 25, 30]
+        self._low_batt_threshold = thresholds[idx]
+        self._warned_low = False  # 重置警告状态，让新阈值立即生效
+        self._save_settings()
+
+    def _on_refresh_interval_changed(self, idx):
+        intervals = [5, 10, 15, 30]
+        self._refresh_interval = intervals[idx]
+        self.data_timer.setInterval(self._refresh_interval * 60 * 1000)
+        self.monitor.set_check_interval(self._refresh_interval * 60)
+        self._save_settings()
+
+    def _on_close_quit_changed(self, checked):
+        self._close_quits = checked
+        self._save_settings()
+
+    def _on_low_batt_notify_changed(self, checked):
+        self._low_batt_notify = checked
+        self._save_settings()
+
     def _quit_app(self):
         self._mouse_hook.uninstall()
         self.tray.hide()
@@ -698,8 +912,11 @@ class MouseWidget(QWidget):
             self.btn_settings.setStyleSheet(self._settings_btn_base_style())
 
     def _on_close(self):
-        """最小化到托盘"""
-        self.hide()
+        """关闭按钮：退出或最小化到托盘"""
+        if self._close_quits:
+            self._quit_app()
+        else:
+            self.hide()
 
     # ───────── 全局鼠标钩子（仅光标在界面内时激活） ─────────
 
@@ -749,7 +966,8 @@ class MouseWidget(QWidget):
     def _init_timers(self):
         self.data_timer = QTimer(self)
         self.data_timer.timeout.connect(self._async_refresh_data)
-        self.data_timer.start(60000)
+        self.data_timer.start(self._refresh_interval * 60 * 1000)
+        self.monitor.set_check_interval(self._refresh_interval * 60)
 
         self.anim_timer = QTimer(self)
         self.anim_timer.timeout.connect(self._animate)
@@ -834,15 +1052,16 @@ class MouseWidget(QWidget):
         self._check_low_battery(info['battery'])
 
     def _check_low_battery(self, pct):
-        if pct <= 20 and not self._warned_low:
+        if pct <= self._low_batt_threshold and not self._warned_low:
             self._warned_low = True
             self.warn_lbl.show()
-            self.tray.showMessage(
-                "⚠ 鼠标电量低",
-                f"当前电量仅剩 {pct}%，请尽快充电！",
-                QSystemTrayIcon.Warning, 5000
-            )
-        elif pct > 25:
+            if self._low_batt_notify:
+                self.tray.showMessage(
+                    "⚠ 鼠标电量低",
+                    f"当前电量仅剩 {pct}%，请尽快充电！",
+                    QSystemTrayIcon.Warning, 5000
+                )
+        elif pct > self._low_batt_threshold + 5:
             self._warned_low = False
             self.warn_lbl.hide()
 
