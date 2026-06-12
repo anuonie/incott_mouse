@@ -69,10 +69,10 @@ APP_NAME = "MouseWidget"
 
 
 def get_exe_path():
-    """获取当前脚本的启动命令"""
-    python = sys.executable
+    """获取当前脚本的启动命令（用 pythonw 避免弹出命令行窗口）"""
+    pythonw = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
     script = os.path.abspath(__file__)
-    return f'"{python}" "{script}" --autostart'
+    return f'"{pythonw}" "{script}" --autostart'
 
 
 def install_autostart():
